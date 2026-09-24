@@ -20,10 +20,13 @@
 安装（任选其一）：
 
 ```sh
-# 1) 作为 Pi 扩展目录安装
+# 1) 作为 Pi 包安装（推荐；package.json 的 pi 字段声明了扩展入口）
+pi install git:github.com/YangChengxxyy/pi-axonhub-provider-plugin
+
+# 2) 作为 Pi 扩展目录安装
 ln -s /path/to/pi-axonhub-provider-plugin ~/.pi/agent/extensions/axonhub
 
-# 2) 开发时直接加载
+# 3) 开发时直接加载
 pi -e /path/to/pi-axonhub-provider-plugin
 ```
 
