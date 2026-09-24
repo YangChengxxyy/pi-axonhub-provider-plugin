@@ -6,17 +6,17 @@
  * - Auto-discovers models from an AxonHub gateway (`GET {baseURL}/v1/models`)
  *   as a dynamic provider; Pi restores the cached list offline and refreshes
  *   it through its model-catalog refresh (no custom timers)
- * - API key via `/login axonhub` (stored credential wins, `AXONHUB_API_KEY`
+ * - API key via `/login axonhub-openai` (stored credential wins, `AXONHUB_API_KEY`
  *   env var as ambient fallback)
- * - Registers under configurable protocol(s): "openai", "anthropic", or both
+ * - Registers both protocol providers: `axonhub-openai` (OpenAI Chat
+ *   Completions) and `axonhub-anthropic` (Anthropic Messages)
  * - Enriches models with pricing / context limits / reasoning capability from
  *   models.dev (canonical vendor rates, or ZenMux gateway rates)
  * - Reasoning models get `reasoning: true`, so Pi's thinking-level selector works
  *
  * Configuration via environment variables:
  *   AXONHUB_BASE_URL   - AxonHub root, default https://llm.cccloud.xin
- *   AXONHUB_API_KEY    - ambient API key fallback (prefer `/login axonhub`)
- *   AXONHUB_PROTOCOL   - "openai" | "anthropic" | "both" (comma-separated list also accepted; default "openai")
+ *   AXONHUB_API_KEY    - ambient API key fallback (prefer `/login axonhub-openai`)
  *   AXONHUB_PRICING    - "canonical" | "zenmux" | "none" (default "canonical")
  *
  * Install: `pi install git:github.com/YangChengxxyy/pi-axonhub-provider-plugin`
@@ -35,7 +35,8 @@ import {
 } from "@earendil-works/pi-ai/compat"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
-type Protocol = "openai" | "anthropic"
+const PROTOCOLS = ["openai", "anthropic"] as const
+type Protocol = (typeof PROTOCOLS)[number]
 type Pricing = "canonical" | "zenmux" | "none"
 
 const MODELS_DEV_API = "https://models.dev/api.json"
@@ -45,22 +46,10 @@ const DEFAULT_BASE_URL = "https://llm.cccloud.xin"
 // Options
 // ---------------------------------------------------------------------------
 
-function readEnv(): { baseURL: string; protocols: Protocol[]; pricing: Pricing } {
+function readEnv(): { baseURL: string; pricing: Pricing } {
 	const pricingEnv = process.env.AXONHUB_PRICING as Pricing | undefined
-	const protocols = new Set<Protocol>()
-	for (const token of (process.env.AXONHUB_PROTOCOL ?? "openai").split(",")) {
-		const t = token.trim().toLowerCase()
-		if (t === "both" || t === "all") {
-			protocols.add("openai")
-			protocols.add("anthropic")
-		} else if (t === "openai" || t === "anthropic") {
-			protocols.add(t)
-		}
-	}
-	if (protocols.size === 0) protocols.add("openai")
 	return {
 		baseURL: (process.env.AXONHUB_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, ""),
-		protocols: [...protocols],
 		pricing: pricingEnv === "zenmux" || pricingEnv === "none" ? pricingEnv : "canonical",
 	}
 }
@@ -302,11 +291,11 @@ function buildModels(
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-	const { baseURL, protocols, pricing } = readEnv()
+	const { baseURL, pricing } = readEnv()
 	const pricingProvider = pricing === "zenmux" ? "zenmux" : undefined
 
-	for (const protocol of protocols) {
-		const providerId = protocol === "anthropic" ? "axonhub-anthropic" : "axonhub"
+	for (const protocol of PROTOCOLS) {
+		const providerId = `axonhub-${protocol}`
 		const api = protocol === "anthropic" ? "anthropic-messages" : "openai-completions"
 		// anthropic-messages (Anthropic SDK style) resolves to {baseUrl}/v1/messages,
 		// i.e. AxonHub's /anthropic/v1/messages route.
@@ -316,7 +305,7 @@ export default function (pi: ExtensionAPI) {
 			id: providerId,
 			name: `AxonHub (${protocol})`,
 			baseUrl,
-			// `/login axonhub` (or `axonhub-anthropic`) prompts for and stores the key;
+			// `/login axonhub-openai` (or `axonhub-anthropic`) prompts for and stores the key;
 			// a stored credential wins, AXONHUB_API_KEY is the ambient fallback.
 			auth: { apiKey: envApiKeyAuth("AxonHub API key", ["AXONHUB_API_KEY"]) },
 			models: [],
