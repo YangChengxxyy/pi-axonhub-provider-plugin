@@ -19,19 +19,20 @@
  *   AXONHUB_PROTOCOL   - "openai" | "anthropic" (default "openai")
  *   AXONHUB_PRICING    - "canonical" | "zenmux" | "none" (default "canonical")
  *
- * Install: copy/symlink this directory into ~/.pi/agent/extensions/
- * (or run `pi -e /path/to/pi-axonhub-provider-plugin`).
+ * Install: `pi install git:github.com/YangChengxxyy/pi-axonhub-provider-plugin`
+ * (the package.json `pi` manifest declares this file as the extension entry),
+ * or run `pi -e /path/to/pi-axonhub-provider-plugin` while developing.
  */
 import {
+	anthropicMessagesApi,
 	createProvider,
 	envApiKeyAuth,
+	openAICompletionsApi,
 	type Api,
 	type Credential,
 	type Model,
 	type RefreshModelsContext,
-} from "@earendil-works/pi-ai"
-import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy"
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy"
+} from "@earendil-works/pi-ai/compat"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 type Protocol = "openai" | "anthropic"
