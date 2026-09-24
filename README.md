@@ -14,7 +14,7 @@
 |---|---|---|
 | `AXONHUB_BASE_URL` | AxonHub 根地址 | `https://llm.cccloud.xin` |
 | `AXONHUB_API_KEY` | AxonHub API key（环境变量兜底，推荐用 `/login`） | — |
-| `AXONHUB_PROTOCOL` | `openai` 或 `anthropic` | `openai` |
+| `AXONHUB_PROTOCOL` | `openai` / `anthropic` / `both`（也接受逗号分隔，如 `openai,anthropic`） | `openai` |
 | `AXONHUB_PRICING` | `canonical` \| `zenmux` \| `none` | `canonical` |
 
 安装（任选其一）：
@@ -40,12 +40,13 @@ pi -e /path/to/pi-axonhub-provider-plugin
 AXONHUB_API_KEY=ah-... pi
 ```
 
-启动后用 `/model` 选择 `axonhub/<model>`（或 `axonhub-anthropic/<model>`）。
+启动后用 `/model` 选择 `axonhub/<model>`（或 `axonhub-anthropic/<model>`）；`AXONHUB_PROTOCOL=both` 时两个 provider 同时可用。
 
 ## 协议说明
 
 - `openai`：注册 provider `axonhub`，`baseUrl = {baseURL}/v1`，走 OpenAI Chat Completions，思考强度映射为 `reasoning_effort`
 - `anthropic`：注册 provider `axonhub-anthropic`，`baseUrl = {baseURL}/anthropic`（最终请求 `{baseURL}/anthropic/v1/messages`），思考强度走 Anthropic `thinking`
+- `both`：同时注册上述两个 provider，共用同一份模型列表（60s 缓存）
 
 价格与元数据：启动时抓取 `https://models.dev/api.json`，按模型 ID 匹配（大小写、`4.5`/`4-5` 版本风格归一化，支持 `vendor/model` 前缀）。`AXONHUB_PRICING=canonical` 优先取厂商官方数据（anthropic/openai/zai/deepseek/minimax/moonshotai/xai/stepfun/xiaomi），`zenmux` 优先取 ZenMux 网关价。匹配不到的模型回退 ID 启发式（价格留空）。注意：这是上游公开牌价，若你的 AxonHub 渠道有折扣/加价，以 AxonHub 后台实际计费为准。
 

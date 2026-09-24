@@ -8,7 +8,7 @@
  *   it through its model-catalog refresh (no custom timers)
  * - API key via `/login axonhub` (stored credential wins, `AXONHUB_API_KEY`
  *   env var as ambient fallback)
- * - Registers under a configurable protocol ("openai" or "anthropic")
+ * - Registers under configurable protocol(s): "openai", "anthropic", or both
  * - Enriches models with pricing / context limits / reasoning capability from
  *   models.dev (canonical vendor rates, or ZenMux gateway rates)
  * - Reasoning models get `reasoning: true`, so Pi's thinking-level selector works
@@ -16,7 +16,7 @@
  * Configuration via environment variables:
  *   AXONHUB_BASE_URL   - AxonHub root, default https://llm.cccloud.xin
  *   AXONHUB_API_KEY    - ambient API key fallback (prefer `/login axonhub`)
- *   AXONHUB_PROTOCOL   - "openai" | "anthropic" (default "openai")
+ *   AXONHUB_PROTOCOL   - "openai" | "anthropic" | "both" (comma-separated list also accepted; default "openai")
  *   AXONHUB_PRICING    - "canonical" | "zenmux" | "none" (default "canonical")
  *
  * Install: `pi install git:github.com/YangChengxxyy/pi-axonhub-provider-plugin`
@@ -45,11 +45,22 @@ const DEFAULT_BASE_URL = "https://llm.cccloud.xin"
 // Options
 // ---------------------------------------------------------------------------
 
-function readEnv(): { baseURL: string; protocol: Protocol; pricing: Pricing } {
+function readEnv(): { baseURL: string; protocols: Protocol[]; pricing: Pricing } {
 	const pricingEnv = process.env.AXONHUB_PRICING as Pricing | undefined
+	const protocols = new Set<Protocol>()
+	for (const token of (process.env.AXONHUB_PROTOCOL ?? "openai").split(",")) {
+		const t = token.trim().toLowerCase()
+		if (t === "both" || t === "all") {
+			protocols.add("openai")
+			protocols.add("anthropic")
+		} else if (t === "openai" || t === "anthropic") {
+			protocols.add(t)
+		}
+	}
+	if (protocols.size === 0) protocols.add("openai")
 	return {
 		baseURL: (process.env.AXONHUB_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, ""),
-		protocol: process.env.AXONHUB_PROTOCOL === "anthropic" ? "anthropic" : "openai",
+		protocols: [...protocols],
 		pricing: pricingEnv === "zenmux" || pricingEnv === "none" ? pricingEnv : "canonical",
 	}
 }
@@ -109,6 +120,11 @@ function apiKeyOf(credential: Credential | undefined): string | undefined {
 	return credential?.type === "api_key" ? credential.key : undefined
 }
 
+// Both protocol providers fetch the same `/v1/models` list; share a short-TTL
+// cache so a catalog refresh issues one upstream request.
+let axonHubModelsCache: { key: string; at: number; models: AxonHubModel[] } | undefined
+const AXONHUB_MODELS_TTL_MS = 60 * 1000
+
 async function fetchAxonHubModels(
 	baseURL: string,
 	credential: Credential | undefined,
@@ -116,6 +132,13 @@ async function fetchAxonHubModels(
 ): Promise<AxonHubModel[]> {
 	const apiKey = apiKeyOf(credential) ?? process.env.AXONHUB_API_KEY
 	if (!apiKey) return [] // unconfigured: no models until /login or env key
+	const cacheKey = `${baseURL}|${apiKey}`
+	if (
+		axonHubModelsCache &&
+		axonHubModelsCache.key === cacheKey &&
+		Date.now() - axonHubModelsCache.at < AXONHUB_MODELS_TTL_MS
+	)
+		return axonHubModelsCache.models
 	const res = await fetch(`${baseURL}/v1/models`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 		signal,
@@ -123,7 +146,9 @@ async function fetchAxonHubModels(
 	if (!res.ok)
 		throw new Error(`AxonHub model list failed: ${res.status} ${await res.text().catch(() => "")}`)
 	const body = (await res.json()) as { data?: AxonHubModel[] }
-	return body.data ?? []
+	const models = body.data ?? []
+	axonHubModelsCache = { key: cacheKey, at: Date.now(), models }
+	return models
 }
 
 // ---------------------------------------------------------------------------
@@ -277,32 +302,35 @@ function buildModels(
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-	const { baseURL, protocol, pricing } = readEnv()
-	const providerId = protocol === "anthropic" ? "axonhub-anthropic" : "axonhub"
-	const api = protocol === "anthropic" ? "anthropic-messages" : "openai-completions"
-	// anthropic-messages (Anthropic SDK style) resolves to {baseUrl}/v1/messages,
-	// i.e. AxonHub's /anthropic/v1/messages route.
-	const baseUrl = protocol === "anthropic" ? `${baseURL}/anthropic` : `${baseURL}/v1`
+	const { baseURL, protocols, pricing } = readEnv()
 	const pricingProvider = pricing === "zenmux" ? "zenmux" : undefined
 
-	const provider = createProvider({
-		id: providerId,
-		name: `AxonHub (${protocol})`,
-		baseUrl,
-		// `/login axonhub` (or `axonhub-anthropic`) prompts for and stores the key;
-		// a stored credential wins, AXONHUB_API_KEY is the ambient fallback.
-		auth: { apiKey: envApiKeyAuth("AxonHub API key", ["AXONHUB_API_KEY"]) },
-		models: [],
-		api: protocol === "anthropic" ? anthropicMessagesApi() : openAICompletionsApi(),
-		// Dynamic model list: Pi restores the persisted catalog offline and
-		// re-fetches through its model-catalog refresh.
-		fetchModels: async (context: RefreshModelsContext): Promise<Model<Api>[]> => {
-			const remote = await fetchAxonHubModels(baseURL, context.credential, context.signal)
-			if (remote.length === 0) return []
-			const devIndex = pricing === "none" ? undefined : await fetchModelsDev(context.signal)
-			return buildModels(providerId, api, baseUrl, remote, devIndex, pricingProvider)
-		},
-	})
+	for (const protocol of protocols) {
+		const providerId = protocol === "anthropic" ? "axonhub-anthropic" : "axonhub"
+		const api = protocol === "anthropic" ? "anthropic-messages" : "openai-completions"
+		// anthropic-messages (Anthropic SDK style) resolves to {baseUrl}/v1/messages,
+		// i.e. AxonHub's /anthropic/v1/messages route.
+		const baseUrl = protocol === "anthropic" ? `${baseURL}/anthropic` : `${baseURL}/v1`
 
-	pi.registerProvider(provider)
+		const provider = createProvider({
+			id: providerId,
+			name: `AxonHub (${protocol})`,
+			baseUrl,
+			// `/login axonhub` (or `axonhub-anthropic`) prompts for and stores the key;
+			// a stored credential wins, AXONHUB_API_KEY is the ambient fallback.
+			auth: { apiKey: envApiKeyAuth("AxonHub API key", ["AXONHUB_API_KEY"]) },
+			models: [],
+			api: protocol === "anthropic" ? anthropicMessagesApi() : openAICompletionsApi(),
+			// Dynamic model list: Pi restores the persisted catalog offline and
+			// re-fetches through its model-catalog refresh.
+			fetchModels: async (context: RefreshModelsContext): Promise<Model<Api>[]> => {
+				const remote = await fetchAxonHubModels(baseURL, context.credential, context.signal)
+				if (remote.length === 0) return []
+				const devIndex = pricing === "none" ? undefined : await fetchModelsDev(context.signal)
+				return buildModels(providerId, api, baseUrl, remote, devIndex, pricingProvider)
+			},
+		})
+
+		pi.registerProvider(provider)
+	}
 }
