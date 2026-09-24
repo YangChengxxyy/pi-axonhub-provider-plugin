@@ -33,7 +33,8 @@ pi -e /path/to/pi-axonhub-provider-plugin
 
 ```sh
 # 方式一：Pi 内交互输入（持久化，推荐）
-# 启动 pi 后执行 /login，选择 axonhub-openai 或 axonhub-anthropic
+# 启动 pi 后执行 /login，选择 axonhub-openai 或 axonhub-anthropic 任一个即可
+# （两个 provider 共享同一份 key，登录一次两边都可用）
 
 # 方式二：环境变量
 AXONHUB_API_KEY=ah-... pi
